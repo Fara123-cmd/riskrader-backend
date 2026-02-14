@@ -1,8 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import xgboost as xgb
+import os
 import pickle
 import numpy as np
+
+# OPTIONAL IMPORTS (SAFE)
+try:
+    import xgboost as xgb
+except ImportError:
+    xgb = None
 
 from crowd_density import crowd_density, crowd_alert
 from firebase_service import send_alert
@@ -14,16 +20,34 @@ app = Flask(__name__)
 CORS(app)
 
 # -------------------------
-# LOAD MODEL FILES
+# BASE DIRECTORY (RENDER SAFE)
 # -------------------------
-model = xgb.XGBClassifier()
-model.load_model("crime_model.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-with open("scaler.pkl", "rb") as f:
-    scaler = pickle.load(f)
+# -------------------------
+# LOAD MODEL FILES SAFELY
+# -------------------------
+model = None
+scaler = None
+features = []
 
-with open("features.pkl", "rb") as f:
-    features = pickle.load(f)
+try:
+    if xgb is None:
+        raise ImportError("xgboost not installed")
+
+    model = xgb.XGBClassifier()
+    model.load_model(os.path.join(BASE_DIR, "crime_model.json"))
+
+    with open(os.path.join(BASE_DIR, "scaler.pkl"), "rb") as f:
+        scaler = pickle.load(f)
+
+    with open(os.path.join(BASE_DIR, "features.pkl"), "rb") as f:
+        features = pickle.load(f)
+
+    print("✅ Model & files loaded successfully")
+
+except Exception as e:
+    print("❌ Model loading failed:", e)
 
 # -------------------------
 # HOME ROUTE
@@ -32,7 +56,7 @@ with open("features.pkl", "rb") as f:
 def home():
     return jsonify({
         "status": "RiskRadar Backend Running 🚀",
-        "model": "XGBoost Risk Prediction",
+        "model_loaded": model is not None,
         "features": features
     })
 
@@ -41,17 +65,20 @@ def home():
 # -------------------------
 @app.route("/predict", methods=["POST"])
 def predict():
+    if model is None or scaler is None:
+        return jsonify({
+            "error": "Model not loaded properly on server"
+        }), 500
+
     try:
         data = request.json or {}
 
-        # REQUIRED
         city = data.get("city")
         area = data.get("area")
 
         if not city or not area:
             return jsonify({"error": "City and area are required"}), 400
 
-        # OPTIONAL INPUTS
         hour = int(data.get("hour", 18))
         day = int(data.get("day", 3))
         month = int(data.get("month", 6))
@@ -59,19 +86,13 @@ def predict():
 
         night_factor = 1 if hour >= 20 or hour <= 6 else 0
 
-        # MODEL INPUT (SAME ORDER AS TRAINING)
         input_data = np.array([[hour, day, month, victim_age, night_factor]])
         input_scaled = scaler.transform(input_data)
 
-        # PREDICTION
         risk_prob = model.predict_proba(input_scaled)[0][1]
 
-        if risk_prob >= 0.4:
-            risk_level = "HIGH"
-        else:
-            risk_level = "LOW"
+        risk_level = "HIGH" if risk_prob >= 0.4 else "LOW"
 
-        # CROWD LOGIC
         crowd = crowd_density(hour, "Residential")
         crowd_msg = crowd_alert(crowd)
 
@@ -92,11 +113,8 @@ def predict():
         return jsonify({"error": str(e)}), 500
 
 # -------------------------
-# RUN SERVER
+# RUN SERVER (LOCAL ONLY)
 # -------------------------
-import os
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
