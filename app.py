@@ -112,6 +112,7 @@ def predict():
 
         risk_level = "HIGH" if risk_prob >= 0.4 else "LOW"
 
+
         crowd = crowd_density(hour, "Residential")
         crowd_msg = crowd_alert(crowd)
 
@@ -137,4 +138,6 @@ def predict():
 # -------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Running RiskRadar on port {port}")
     app.run(host="0.0.0.0", port=port)
+
