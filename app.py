@@ -48,8 +48,9 @@ try:
     if not os.path.exists(features_path):
         raise FileNotFoundError("features.pkl not found")
 
-    model = xgb.XGBClassifier()
-    model.load_model(model_path)
+    model = xgb.Booster()
+    model.load_model(os.path.join(BASE_DIR, "crime_model.json"))
+
 
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
@@ -106,7 +107,9 @@ def predict():
         input_data = np.array([[hour, day, month, victim_age, night_factor]])
         input_scaled = scaler.transform(input_data)
 
-        risk_prob = float(model.predict_proba(input_scaled)[0][1])
+        dmat = xgb.DMatrix(input_scaled)
+        risk_prob = float(model.predict(dmat)[0])
+
         risk_level = "HIGH" if risk_prob >= 0.4 else "LOW"
 
         crowd = crowd_density(hour, "Residential")
