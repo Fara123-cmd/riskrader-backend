@@ -11,7 +11,7 @@ except ImportError:
     xgb = None
 
 from crowd_density import crowd_density, crowd_alert
-from firebase_service import send_alert
+# from firebase_service import send_alert  # keep disabled unless configured
 
 # -------------------------
 # APP SETUP
@@ -35,19 +35,35 @@ try:
     if xgb is None:
         raise ImportError("xgboost not installed")
 
-    model = xgb.XGBClassifier()
-    model.load_model(os.path.join(BASE_DIR, "crime_model.json"))
+    model_path = os.path.join(BASE_DIR, "crime_model.json")
+    scaler_path = os.path.join(BASE_DIR, "scaler.pkl")
+    features_path = os.path.join(BASE_DIR, "features.pkl")
 
-    with open(os.path.join(BASE_DIR, "scaler.pkl"), "rb") as f:
+    if not os.path.exists(model_path):
+        raise FileNotFoundError("crime_model.json not found")
+
+    if not os.path.exists(scaler_path):
+        raise FileNotFoundError("scaler.pkl not found")
+
+    if not os.path.exists(features_path):
+        raise FileNotFoundError("features.pkl not found")
+
+    model = xgb.XGBClassifier()
+    model.load_model(model_path)
+
+    with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
 
-    with open(os.path.join(BASE_DIR, "features.pkl"), "rb") as f:
+    with open(features_path, "rb") as f:
         features = pickle.load(f)
 
-    print("✅ Model & files loaded successfully")
+    print("✅ Model, scaler & features loaded successfully")
 
 except Exception as e:
     print("❌ Model loading failed:", e)
+    model = None
+    scaler = None
+    features = []
 
 # -------------------------
 # HOME ROUTE
@@ -57,7 +73,8 @@ def home():
     return jsonify({
         "status": "RiskRadar Backend Running 🚀",
         "model_loaded": model is not None,
-        "features": features
+        "scaler_loaded": scaler is not None,
+        "features_loaded": bool(features)
     })
 
 # -------------------------
@@ -89,8 +106,7 @@ def predict():
         input_data = np.array([[hour, day, month, victim_age, night_factor]])
         input_scaled = scaler.transform(input_data)
 
-        risk_prob = model.predict_proba(input_scaled)[0][1]
-
+        risk_prob = float(model.predict_proba(input_scaled)[0][1])
         risk_level = "HIGH" if risk_prob >= 0.4 else "LOW"
 
         crowd = crowd_density(hour, "Residential")
@@ -100,11 +116,12 @@ def predict():
             "city": city,
             "area": area,
             "risk_level": risk_level,
-            "risk_probability": round(float(risk_prob), 2),
+            "risk_probability": round(risk_prob, 2),
             "crowd_status": crowd,
             "crowd_alert": crowd_msg,
             "recommendation": (
-                "Avoid isolated routes" if risk_level == "HIGH"
+                "Avoid isolated routes"
+                if risk_level == "HIGH"
                 else "Area looks relatively safe"
             )
         })
@@ -113,8 +130,8 @@ def predict():
         return jsonify({"error": str(e)}), 500
 
 # -------------------------
-# RUN SERVER (LOCAL ONLY)
+# RUN SERVER (RENDER SAFE)
 # -------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
